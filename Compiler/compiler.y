@@ -64,7 +64,6 @@
 
     /* hw3 */
     static int lookup_symbol_address(char*, int);
-    static char *lookup_symbol_type(char*, int);
     static char *lookup_symbol(char*, int);
     // static void code_generation();
     FILE *fp = NULL;
@@ -79,6 +78,11 @@
     int ptr_parameter = 0;
     // char para_print[100];
     bool is_if = false;
+    bool is_array = false;
+    int ptr_array = 0;
+    int number_arr = 0;
+    bool g_has_error = false;
+    bool loop = false;
 %}
 
 
@@ -112,7 +116,7 @@
 
 /* Nonterminal with return, which need to sepcify type */
 %type <s_val> add_op mul_op assign_op unary_op cmp_op shift_op Type Literal
-%type <s_val> ArrayExpr FuncOpen ExpressionStmt LogicalORExpr LogicalANDExpr ComparisonExpr AdditionExpr MultiplicationExpr UnaryExpr Operand 
+%type <s_val> FuncOpen ExpressionStmt LogicalORExpr LogicalANDExpr ComparisonExpr AdditionExpr MultiplicationExpr UnaryExpr Operand 
 
 /* Yacc will start at this nonterminal */
 %start Program 
@@ -156,21 +160,11 @@ FunctionDeclStmt
             fprintf(fp, ".limit stack 20\n");
             fprintf(fp, ".limit locals 20\n");
         }
-        else{
-            // is_main =0;
-        }
-        // while(ptr_parameter!=0){
-        //     lookup_symbol(parameter_stack[ptr_parameter-1], P);
-        //     ptr_parameter --;
-        // }
     }
     FuncBlock
     {
         has_return = false;
         return_type = 'v';
-        // fprintf(fp, "L_exit:\n");
-        // fprintf(fp, "return\n")
-        // fprintf(fp, ".end method\n")
     }
 
     | FuncOpen '(' ')'  
@@ -292,8 +286,6 @@ Block
                 fprintf(fp, "iconst_1\n");
             }
             fprintf(fp, "goto L_exit\n");
-            // fprintf(fp, "return\n");
-            // fprintf(fp, ".end method\n");
         }
         
         dump_symbol();
@@ -304,6 +296,9 @@ Block
         dump_symbol();
         if(is_if){
             is_if = false;
+        }
+        if(loop){
+            fprintf(fp, "goto L_loop\n");
         }
     }
     | StartBlock BREAK Literal ';' NEWLINE '}' { dump_symbol();}
@@ -369,16 +364,59 @@ DeclarationStmt
         else if(strcmp($<s_val>5, "bool") == 0)
             fprintf(fp, "istore %d\n", lookup_symbol_address($<s_val>3, I));
     }
-    | LET ID ':' DeclareArrayStmt '=' ExpressionStmt { 
+    | LET ID ':' DeclareArrayStmt
+    {
+        is_array = true;
+    }
+     '=' ExpressionStmt 
+    { 
         insert_symbol("array", $<s_val>2, "-", I, false );
-        
+        fprintf(fp, "astore_1\n");
     }
     | LET MUT ID '=' ExpressionStmt { 
         insert_symbol("i32", $<s_val>3, "-", I, true ); 
         fprintf(fp, "istore %d\n", lookup_symbol_address($<s_val>3, I));
     }
-    | LET ID '=' Literal { insert_symbol($<s_val>4, $<s_val>2, "-", I, false); }
-    | LET ID ':' Type '=' LoopStmt { insert_symbol($<s_val>4, $<s_val>2, "-", I, false); }
+    | LET ID '=' Literal 
+    { 
+        insert_symbol($<s_val>4, $<s_val>2, "-", I, false); 
+        if(strcmp($<s_val>4, "i32") == 0)
+            fprintf(fp, "istore %d\n", lookup_symbol_address($<s_val>2, I));
+        else if(strcmp($<s_val>4, "f32") == 0)
+            fprintf(fp, "fstore %d\n", lookup_symbol_address($<s_val>2, I));
+        else if(strcmp($<s_val>4, "str") == 0)
+            fprintf(fp, "astore %d\n", lookup_symbol_address($<s_val>2, I));
+        else if(strcmp($<s_val>4, "bool") == 0)
+            fprintf(fp, "istore %d\n", lookup_symbol_address($<s_val>2, I));
+    }
+    | LET ID ':' Type '=' LoopStmt 
+    {
+        insert_symbol($<s_val>4, $<s_val>2, "-", I, false); 
+        fprintf(fp, "L_loop_end:\n");
+        if(strcmp($<s_val>4, "i32") == 0)
+            fprintf(fp, "istore %d\n", lookup_symbol_address($<s_val>3, I));
+        else if(strcmp($<s_val>4, "f32") == 0)
+            fprintf(fp, "fstore %d\n", lookup_symbol_address($<s_val>3, I));
+        else if(strcmp($<s_val>4, "str") == 0)
+            fprintf(fp, "astore %d\n", lookup_symbol_address($<s_val>3, I));
+        else if(strcmp($<s_val>4, "bool") == 0)
+            fprintf(fp, "istore %d\n", lookup_symbol_address($<s_val>3, I));
+    }
+;
+DeclareArrayStmt
+    : '[' DeclareArrayStmt ']' // multi-dimension
+    | Type ';' Literal 
+    {
+        if(strcmp($<s_val>1, "i32") == 0)
+            fprintf(fp, "newarray int\n");
+    }
+    
+;
+ArrayExpr
+    : Literal ',' ArrayExpr
+    | '[' Literal ',' ArrayExpr
+    | Literal ']'
+    | '&' ID  { lookup_symbol($<s_val>2, I); } '[' DotExpr ']'
 ;
 AssignmentStmt
     : ExpressionStmt
@@ -386,21 +424,7 @@ AssignmentStmt
         strcpy(id_storage, id_temp);
     } 
     assign_op{
-        if(strcmp($<s_val>3, "ADD_ASSIGN") == 0){
-            fprintf(fp, "%cload %d\n", $<s_val>1[0], lookup_symbol_address(id_storage, I));
-        }
-        else if(strcmp($<s_val>3, "SUB_ASSIGN") == 0){
-            fprintf(fp, "%cload %d\n", $<s_val>1[0], lookup_symbol_address(id_storage, I));
-        }
-        else if(strcmp($<s_val>3, "MUL_ASSIGN") == 0){
-            fprintf(fp, "%cload %d\n", $<s_val>1[0], lookup_symbol_address(id_storage, I));
-        }
-        else if(strcmp($<s_val>3, "DIV_ASSIGN") == 0){
-            fprintf(fp, "%cload %d\n", $<s_val>1[0], lookup_symbol_address(id_storage, I));
-        }
-        else if(strcmp($<s_val>3, "REM_ASSIGN") == 0){
-            fprintf(fp, "%cload %d\n", $<s_val>1[0], lookup_symbol_address(id_storage, I));
-        }
+        
     } 
     ExpressionStmt 
     { 
@@ -434,6 +458,9 @@ AssignmentStmt
 IFStmt
     : IFOpen NEWLINE
     {
+        if(loop){
+            fprintf(fp, "goto L_loop_end\n");
+        }
         fprintf(fp, "L_if_%d: \n\n", label_number-1);
         fprintf(fp, "; ------if_end------\n");
     }
@@ -512,6 +539,11 @@ PrintStmt
         if(strcmp($<s_val>3, "bool") == 0 || strcmp($<s_val>3, "str") == 0){
             fprintf(fp, "invokevirtual java/io/PrintStream/println(Ljava/lang/String;)V\n");
         }
+        else if(is_array){
+            
+            fprintf(fp, "invokevirtual java/io/PrintStream/println(I)V\n");
+            is_array = false;
+        }
         else{
             fprintf(fp, "invokevirtual java/io/PrintStream/println(%c)V\n", toupper($<s_val>3[0]));
         }
@@ -523,6 +555,7 @@ WhileStmt
     : WHILE 
     {
         is_while = true;
+        fprintf(fp, "L_while_%d: \n", label_number++);
     }
     ExpressionStmt
     {
@@ -540,15 +573,46 @@ WhileStmt
     }
 ;
 ForStmt
-    : FOR ID IN ID { lookup_symbol($<s_val>4, I); } StartBlock { insert_symbol("i32", $<s_val>2, "-", Fo, false); }  StatementList  '}'{ dump_symbol() ;}
+    : FOR
+    {
+        fprintf(fp, "iconst_0\n");
+        fprintf(fp, "istore_1\n");
+        fprintf(fp, "aload_0\n");
+        fprintf(fp, "arraylength\n");
+        fprintf(fp, "istore_2\n");
+
+        fprintf(fp, "loop:\n");
+        fprintf(fp, "iload_1\n");
+        fprintf(fp, "iload_2\n");
+        fprintf(fp, "if_icmpge end\n");
+        fprintf(fp, "aload_0\n");
+        fprintf(fp, "iload_1\n");
+        fprintf(fp, "iaload\n");
+    }
+    ID IN ID 
+    {
+        lookup_symbol($<s_val>4, I); 
+    }
+    StartBlock { insert_symbol("i32", $<s_val>2, "-", Fo, false); }  StatementList  '}'
+    { 
+        fprintf(fp, "iinc 1 1\n");
+        fprintf(fp, "goto loop\n");
+        fprintf(fp, "end:\n");
+        dump_symbol() ;
+    }
 ;
 LoopStmt
-    : LOOP Block
+    : LOOP 
+    {
+        fprintf(fp, "L_loop:\n");
+        loop = true;
+    }
+    Block
+    {
+
+    }
 ;
-DeclareArrayStmt
-    : '[' DeclareArrayStmt ']' // multi-dimension
-    | Type ';' Literal 
-;
+
 ExpressionStmt
     : LogicalORExpr {$$ = $1;}
 ;
@@ -610,7 +674,7 @@ ComparisonExpr
                 fprintf(fp, "; --- here is equal to ---\n");
                 fprintf(fp, "ifeq L_if_%d\n", label_number++);
                 fprintf(fp, "goto L_if_%d\n", label_number++);
-                fprintf(fp, "L_if_%d: \n", label_number-2);//true
+                fprintf(fp, "L_if_%d: \n\n", label_number-2);//true
                 if(is_if == false)
                     fprintf(fp, "\nL_if_%d: \n", label_number-1);
                 else 
@@ -678,7 +742,7 @@ UnaryExpr
         else if(strcmp($<s_val>1, "neg") == 0)
             fprintf(fp, "%cneg\n", $<s_val>2[0]);
     }
-    | ArrayExpr {$$ = $1;}
+    | ArrayExpr
     | Operand 
     { 
         $$ = $1; 
@@ -693,12 +757,7 @@ UnaryExpr
         
     }
 ;
-ArrayExpr
-    : Literal ',' ArrayExpr
-    | '[' Literal ',' ArrayExpr
-    | Literal ']'
-    | '&' ID  { lookup_symbol($<s_val>2, I); } '[' DotExpr ']'
-;
+
 DotExpr
     : DOTDOT { printf("DOTDOT\n"); } Literal 
     | DOtOpen { printf("DOTDOT\n"); }
@@ -711,11 +770,19 @@ Operand
     | Literal AS { casting = true; } Type { $$ = $<s_val>4; }// change_type
     | ID { $$ = lookup_symbol($<s_val>1, I) ;}
     | '(' ExpressionStmt ')' { $$ = $2; } // call function
-    | ID '[' INT_LIT ']' { $$ = lookup_symbol($<s_val>1, I); printf("INT_LIT %d\n", $<i_val>3);} // array
+    | ID '[' INT_LIT ']' // array
+    { 
+        fprintf(fp, "aload_1\n");
+        fprintf(fp, "iconst_%d\n", $<i_val>3);
+        fprintf(fp, "iaload\n");
+        $$ = lookup_symbol($<s_val>1, I); 
+        printf("INT_LIT %d\n", $<i_val>3);
+        is_array = true;
+    } 
     | ID AS // change_type
     {
         casting = true;
-        lookup_symbol($<s_val>1, 0);
+        lookup_symbol($<s_val>1, I);
     }
     Type 
     {
@@ -736,9 +803,14 @@ Operand
 Literal
     : INT_LIT { $$ = "i32"; printf("INT_LIT %d\n", $<i_val>1); 
         if(is_while){
-            fprintf(fp, "L_while_%d: \n", label_number++);
             is_while = false;
-            fprintf(fp, "ldc %d\n", $<i_val>1-1);
+            fprintf(fp, "ldc %d\n", $<i_val>1);
+        }
+        else if(is_array){
+            fprintf(fp, "dup\n");
+            fprintf(fp, "iconst_%d\n", ptr_array++);
+            fprintf(fp, "bipush %d\n", $<i_val>1);
+            fprintf(fp, "iastore\n");
         }
         else
             fprintf(fp, "ldc %d\n", $<i_val>1);
@@ -824,9 +896,13 @@ int main(int argc, char *argv[])
         yyin = stdin;
     }
 
-
+     if (!yyin) {
+        printf("file %s doesn't exists or cannot be opened\n", argv[1]);
+        exit(1);
+    }
     /* hw3 */
-    fp = fopen("hw3.j", "w");
+    char *bytecode_filename = "hw3.j";
+    fp = fopen(bytecode_filename, "w");
     fprintf(fp,".source hw3.j\n");
     fprintf(fp,".class public Main\n");
     fprintf(fp,".super java/lang/Object\n");
@@ -839,6 +915,10 @@ int main(int argc, char *argv[])
 	printf("Total lines: %d\n", yylineno);
     fclose(fp);
     fclose(yyin);
+     if (g_has_error) {
+        remove(bytecode_filename);
+    }
+    yylex_destroy();
     return 0;
 }
 
@@ -975,46 +1055,6 @@ static int lookup_symbol_address(char *name, int mark_var) { // if mark_var = 0,
     return "undefined";
 }
 
-static char *lookup_symbol_type(char *name, int mark_var) { // if mark_var = 0, function; else if mark_var = 1, parameter, else(id) is 2
-    struct table *t = current_table;
-    struct symbol *s = NULL;
-    while(t!=NULL){
-        s = t -> head;
-        while(s!= NULL){
-            if(strcmp(s-> name, name) == 0){
-                if(mark_var == Fu)// function
-                {
-                    if(has_return){
-                        strcat(func_para, ")");
-                        printf("call: %s%s%c\n", s -> name, func_para, toupper(return_type));
-                        has_return = false;
-                        if(return_type == 'b')
-                            s -> func_sig = strcat(func_para, "B");
-                        return s -> func_sig  ;
-                    }
-                    else{
-                        printf("call: %s%s\n", s -> name, s -> func_sig);
-                        return s -> func_sig;
-                    }
-                }
-                    
-                else if(mark_var != Fo){// not function and foreach
-                    printf("IDENT (name=%s, address=%d)\n", s->name, s->addr);
-                    return s-> type;
-                }
-                else
-                    return s-> type;
-            }
-            else// name is not same
-                s = s->next;
-        }
-        t = t-> prev;
-    }
-    /* if it's not return until this step, it is represent the symbol is an error */
-    printf("error:%d: undefined: %s\n", yylineno+1, name);
-    return "undefined";
-}
-
 static char *lookup_symbol(char *name, int mark_var) { // if mark_var = 0, function; else if mark_var = 1, parameter, else(id) is 2
     struct table *t = current_table;
     struct symbol *s = NULL;
@@ -1065,6 +1105,7 @@ static char *lookup_symbol(char *name, int mark_var) { // if mark_var = 0, funct
     }
     /* if it's not return until this step, it is represent the symbol is an error */
     printf("error:%d: undefined: %s\n", yylineno+1, name);
+    g_has_error = true;
     return "undefined";
 }
 
